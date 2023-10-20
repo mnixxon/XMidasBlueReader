@@ -1,0 +1,58 @@
+classdef XMidasBlueReader < handle
+    properties
+        hcb, ext_header, bluefile
+        dataOffset
+    end
+    
+    methods
+        function obj = XMidasBlueReader(bluefile)
+            obj.bluefile = bluefile;
+            fid = fopen(obj.bluefile, 'r');
+            if fid < 0, disp('Unable to open file.'); return; end
+            
+            obj.hcb = XMidasBlueReader.HCB(fid);
+            obj.ext_header = XMidasBlueReader.ExtendedHeader(fid, obj.hcb);
+            obj.resetRead();
+            fclose(fid);
+        end
+        
+        function samples = read(obj, numSamples)
+            if nargin < 2, numSamples = 1; end
+            
+            fid = fopen(obj.bluefile, 'r');
+            if fid < 0, error('XMidasBlueReader:Read', 'Unable to read file.'); end
+            
+            [eps, typeStr] = obj.getFormatDetails();
+            fseek(fid, obj.dataOffset, 'bof');
+            bytesPerSample = eps * length(typeStr);
+            if bytesPerSample * numSamples > obj.hcb.data_size - (obj.dataOffset - obj.hcb.data_start)
+                error('XMidasBlueReader:Read', 'Requested read exceeds data length.');
+            end
+
+            samples = fread(fid, [eps, numSamples], typeStr);
+            if obj.hcb.format(1) == 'C', samples = complex(samples(1,:), samples(2,:)); end
+            obj.dataOffset += bytesPerSample * numSamples;
+            fclose(fid);
+        end
+        
+        function resetRead(obj)
+            obj.dataOffset = obj.hcb.data_start;
+        end
+        
+        function rewind(obj, numSamples)
+            if nargin < 2, obj.resetRead(); return; end
+            [eps, ~] = obj.getFormatDetails();
+            obj.dataOffset = max([obj.dataOffset - eps * numSamples, obj.hcb.data_start]);
+        end
+    end
+    
+    methods (Access = private)
+        function [eps, typeStr] = getFormatDetails(obj)
+            eps = XMidasBlueReader.FormatSize(obj.hcb.format(1));
+            [typeStr, ~] = XMidasBlueReader.FormatType(obj.hcb.format(2));
+            if prod(eps) > 1, typeStr = sprintf('%d*%s', prod(eps), typeStr); end
+        end
+    end
+    
+    % ... rest of the class remains largely the same ...
+end
