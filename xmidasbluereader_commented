@@ -1,0 +1,111 @@
+classdef XMidasBlueReader < handle
+    % XMidasBlueReader: A class to read and handle data from X-MIDAS BLUE files.
+    
+    properties
+        hcb          % Header control block
+        ext_header   % Extended header information
+        bluefile     % Path to the X-MIDAS BLUE file
+        dataOffset   % Current read position within the data
+    end
+    
+    methods
+        function obj = XMidasBlueReader(bluefile)
+            % Constructor: Initializes the object and reads headers.
+            
+            obj.bluefile = bluefile;          % Store the blue file path
+            
+            % Open the file for reading
+            fid = fopen(obj.bluefile, 'r');
+            if fid < 0
+                disp('Unable to open file.');  % Display error if unable to open file
+                return;
+            end
+            
+            % Read the header control block and extended header
+            obj.hcb = XMidasBlueReader.HCB(fid);
+            obj.ext_header = XMidasBlueReader.ExtendedHeader(fid, obj.hcb);
+            
+            % Reset read position
+            obj.resetRead();
+            
+            % Close the opened file
+            fclose(fid);
+        end
+        
+        function samples = read(obj, numSamples)
+            % Read data samples from the file.
+            
+            if nargin < 2, numSamples = 1; end % If no numSamples specified, default to 1
+            
+            fid = fopen(obj.bluefile, 'r');    % Open the file
+            if fid < 0
+                % Throw error if file can't be read
+                error('XMidasBlueReader:Read', 'Unable to read file.');
+            end
+            
+            % Extract format details using a helper function
+            [eps, typeStr] = obj.getFormatDetails();
+            
+            % Seek to the current read position
+            fseek(fid, obj.dataOffset, 'bof');
+            
+            % Calculate bytes per sample
+            bytesPerSample = eps * length(typeStr);
+            
+            % Ensure the read request does not exceed available data
+            if bytesPerSample * numSamples > obj.hcb.data_size - (obj.dataOffset - obj.hcb.data_start)
+                error('XMidasBlueReader:Read', 'Requested read exceeds data length.');
+            end
+
+            % Read the data
+            samples = fread(fid, [eps, numSamples], typeStr);
+            if obj.hcb.format(1) == 'C'
+                % Convert to complex format if necessary
+                samples = complex(samples(1,:), samples(2,:));
+            end
+            
+            % Update the read position
+            obj.dataOffset += bytesPerSample * numSamples;
+            
+            fclose(fid); % Close the file
+        end
+        
+        function resetRead(obj)
+            % Reset the read position to the start of data.
+            obj.dataOffset = obj.hcb.data_start;
+        end
+        
+        function rewind(obj, numSamples)
+            % Rewind the read position by a specified number of samples.
+            
+            if nargin < 2
+                % If no argument provided, reset read to the start
+                obj.resetRead();
+                return;
+            end
+            
+            % Extract format details
+            [eps, ~] = obj.getFormatDetails();
+            
+            % Calculate and update the read position
+            obj.dataOffset = max([obj.dataOffset - eps * numSamples, obj.hcb.data_start]);
+        end
+    end
+    
+    methods (Access = private)
+        function [eps, typeStr] = getFormatDetails(obj)
+            % Helper function to extract format size and type from hcb.
+            
+            % Get the format size and type
+            eps = XMidasBlueReader.FormatSize(obj.hcb.format(1));
+            [typeStr, ~] = XMidasBlueReader.FormatType(obj.hcb.format(2));
+            
+            % Adjust type string for multiple elements per sample
+            if prod(eps) > 1
+                typeStr = sprintf('%d*%s', prod(eps), typeStr);
+            end
+        end
+    end
+    
+    % ... rest of the class methods, static methods, etc. ...
+end
